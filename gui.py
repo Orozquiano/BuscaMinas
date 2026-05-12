@@ -1,66 +1,126 @@
 """
-Interfaz gráfica con Tkinter: rejilla de botones, menú de niveles,
-temporizador y contador de minas restantes (aproximado por banderas).
+Interfaz Tkinter con tema oscuro, tarjetas y rejilla que escala al redimensionar.
 """
 
 from __future__ import annotations
 
 import tkinter as tk
+import tkinter.font as tkfont
 from tkinter import messagebox, simpledialog, ttk
 from typing import Callable, Optional, Tuple
 
-from minesweeper.board import EstadoPartida, ResultadoRevelado, Tablero
+from .board import EstadoPartida, ResultadoRevelado, Tablero
 
-# Texto del menú y (filas, columnas, número de minas) para cada nivel.
+# Menú: texto y (filas, columnas, minas).
 NIVELES_PRECONFIGURADOS: Tuple[Tuple[str, int, int, int], ...] = (
     ("Principiante (9×9, 10)", 9, 9, 10),
     ("Intermedio (16×16, 40)", 16, 16, 40),
     ("Experto (16×30, 99)", 16, 30, 99),
 )
 
-# Colores para números 1–8; el índice 0 es casilla vacía (texto sin dígito: hace falta un color Tk válido).
+# Colores de números 0–8 sobre fondo oscuro (0 = casilla sin dígito).
 COLORES_NUMEROS = (
-    "#888888",
-    "#0000DD",
-    "#007700",
-    "#CC0000",
-    "#000066",
-    "#660000",
-    "#007777",
-    "#000000",
-    "#555555",
+    "#565f89",
+    "#7aa2f7",
+    "#9ece6a",
+    "#f7768e",
+    "#bb9af7",
+    "#ff9e64",
+    "#73daca",
+    "#c0caf5",
+    "#565f89",
 )
 
 
+def _tema_visual() -> dict[str, str]:
+    """Paleta tipo editor oscuro (legible y contrastada)."""
+    return {
+        "fondo_raiz": "#1a1b26",
+        "fondo_tarjeta": "#24283b",
+        "fondo_rejilla": "#16161e",
+        "celda_cubierta": "#3b4261",
+        "celda_cubierta_activa": "#565f89",
+        "celda_revelada": "#16161e",
+        "celda_numero": "#1f2335",
+        "mina": "#f7768e",
+        "mina_fondo": "#4a2f2f",
+        "mina_pisada_fondo": "#6b2f3a",
+        "bandera": "#bb9af7",
+        "bandera_fondo": "#343b55",
+        "acento": "#7aa2f7",
+        "texto": "#c0caf5",
+        "texto_secundario": "#a9b1d6",
+        "exito": "#9ece6a",
+    }
+
+
 class AplicacionBuscaminas:
-    """Ventana principal: construye la rejilla y enlaza eventos de ratón."""
+    """Ventana principal: estilos ttk, rejilla expandible y fuente reactiva."""
 
     def __init__(self) -> None:
-        # Raíz de Tkinter.
+        self._tema = _tema_visual()
+        self._familia_fuente = "Segoe UI"
+        if "Segoe UI" not in tkfont.families():
+            self._familia_fuente = "TkDefaultFont"
+
         self.ventana_principal = tk.Tk()
         self.ventana_principal.title("Buscaminas")
-        # Dimensiones y minas de la partida actual (por defecto principiante).
+        self.ventana_principal.configure(bg=self._tema["fondo_raiz"])
+        self.ventana_principal.minsize(520, 420)
+        self.ventana_principal.geometry("760x560")
+
         self.filas, self.columnas, self.minas_totales = 9, 9, 10
         self.tablero: Optional[Tablero] = None
-        # Matriz de botones [fila][columna].
         self.casillas_botones: list[list[tk.Button]] = []
-        # Identificador devuelto por after() para poder cancelar el temporizador.
         self._id_temporizador: Optional[str] = None
         self._segundos = 0
-        # True después del primer revelado (para arrancar el cronómetro una sola vez).
         self._partida_arrancada = False
+        self._fuente_celdas_px = 11
 
+        self._aplicar_estilos_ttk()
         self._construir_menu()
-        self._construir_barra_herramientas()
-        self.marco_rejilla = ttk.Frame(self.ventana_principal, padding=4)
-        self.marco_rejilla.pack(fill=tk.BOTH, expand=True)
+        self._construir_cuerpo()
         self.nueva_partida()
 
+    def _aplicar_estilos_ttk(self) -> None:
+        """Tema ``clam`` con colores alineados al fondo oscuro."""
+        t = self._tema
+        estilo = ttk.Style()
+        try:
+            estilo.theme_use("clam")
+        except tk.TclError:
+            pass
+        estilo.configure(".", background=t["fondo_raiz"], foreground=t["texto"])
+        estilo.configure("Card.TFrame", background=t["fondo_tarjeta"])
+        estilo.configure(
+            "Title.TLabel",
+            background=t["fondo_tarjeta"],
+            foreground=t["texto"],
+            font=(self._familia_fuente, 16, "bold"),
+        )
+        estilo.configure(
+            "Stat.TLabel",
+            background=t["fondo_tarjeta"],
+            foreground=t["texto_secundario"],
+            font=(self._familia_fuente, 11),
+        )
+        estilo.configure(
+            "Accent.TButton",
+            background=t["acento"],
+            foreground="#1a1b26",
+            font=(self._familia_fuente, 10, "bold"),
+            padding=(14, 8),
+        )
+        estilo.map(
+            "Accent.TButton",
+            background=[("active", "#89b4fa"), ("pressed", "#6c8fd4")],
+        )
+
     def _construir_menu(self) -> None:
-        """Menú superior: nueva partida, niveles y salida."""
-        barra_menu = tk.Menu(self.ventana_principal)
+        """Barra de menú nativa (no depende del tema ttk)."""
+        barra_menu = tk.Menu(self.ventana_principal, tearoff=0, bg=self._tema["fondo_tarjeta"], fg=self._tema["texto"])
         self.ventana_principal.config(menu=barra_menu)
-        menu_juego = tk.Menu(barra_menu, tearoff=0)
+        menu_juego = tk.Menu(barra_menu, tearoff=0, bg=self._tema["fondo_tarjeta"], fg=self._tema["texto"])
         barra_menu.add_cascade(label="Juego", menu=menu_juego)
         menu_juego.add_command(label="Nueva partida", command=self.nueva_partida, accelerator="F2")
         menu_juego.add_separator()
@@ -74,24 +134,76 @@ class AplicacionBuscaminas:
         menu_juego.add_command(label="Salir", command=self.ventana_principal.quit)
         self.ventana_principal.bind("<F2>", lambda _: self.nueva_partida())
 
-    def _construir_barra_herramientas(self) -> None:
-        """Etiquetas de minas y tiempo más botón reiniciar."""
-        barra = ttk.Frame(self.ventana_principal, padding=(8, 4))
-        barra.pack(fill=tk.X)
-        self.etiqueta_minas = ttk.Label(barra, text="Minas: 10", width=14)
-        self.etiqueta_minas.pack(side=tk.LEFT)
-        self.boton_reiniciar = ttk.Button(barra, text="Reiniciar", command=self.nueva_partida)
-        self.boton_reiniciar.pack(side=tk.LEFT, padx=8)
-        self.etiqueta_tiempo = ttk.Label(barra, text="Tiempo: 0", width=12)
-        self.etiqueta_tiempo.pack(side=tk.LEFT)
+    def _construir_cuerpo(self) -> None:
+        """Contenedor principal con tarjeta superior y rejilla que ocupa el resto."""
+        t = self._tema
+        contenedor = ttk.Frame(self.ventana_principal, padding=(16, 14, 16, 16))
+        contenedor.pack(fill=tk.BOTH, expand=True)
+
+        tarjeta = ttk.Frame(contenedor, style="Card.TFrame", padding=(18, 14, 18, 14))
+        tarjeta.pack(fill=tk.X)
+        tarjeta.columnconfigure(0, weight=1)
+
+        titulo = ttk.Label(tarjeta, text="Buscaminas", style="Title.TLabel")
+        titulo.grid(row=0, column=0, sticky="w")
+
+        fila_stats = ttk.Frame(tarjeta, style="Card.TFrame")
+        fila_stats.grid(row=1, column=0, sticky="ew", pady=(10, 0))
+        fila_stats.columnconfigure(1, weight=1)
+
+        self.etiqueta_minas = ttk.Label(fila_stats, text="Minas: 10", style="Stat.TLabel")
+        self.etiqueta_minas.grid(row=0, column=0, sticky="w")
+
+        self.boton_reiniciar = ttk.Button(
+            fila_stats,
+            text="Nueva partida",
+            style="Accent.TButton",
+            command=self.nueva_partida,
+        )
+        self.boton_reiniciar.grid(row=0, column=1, padx=12)
+
+        self.etiqueta_tiempo = ttk.Label(fila_stats, text="Tiempo: 0 s", style="Stat.TLabel")
+        self.etiqueta_tiempo.grid(row=0, column=2, sticky="e")
+
+        # Marco exterior: la rejilla crece y dispara Configure para escalar fuente.
+        self.marco_tablero_exterior = tk.Frame(contenedor, bg=t["fondo_raiz"])
+        self.marco_tablero_exterior.pack(fill=tk.BOTH, expand=True, pady=(14, 0))
+        self.marco_tablero_exterior.rowconfigure(0, weight=1)
+        self.marco_tablero_exterior.columnconfigure(0, weight=1)
+
+        self.marco_rejilla = tk.Frame(
+            self.marco_tablero_exterior,
+            bg=t["fondo_rejilla"],
+            highlightthickness=1,
+            highlightbackground=t["celda_cubierta"],
+        )
+        self.marco_rejilla.grid(row=0, column=0, sticky="nsew", padx=2, pady=2)
+        self.marco_rejilla.bind("<Configure>", self._al_redimensionar_rejilla)
+
+    def _al_redimensionar_rejilla(self, evento: tk.Event) -> None:
+        """Ajusta el tamaño de fuente de las celdas según el espacio disponible."""
+        if evento.widget is not self.marco_rejilla:
+            return
+        if not self.casillas_botones:
+            return
+        ancho = max(int(evento.width), 1)
+        alto = max(int(evento.height), 1)
+        lado = min(ancho / max(self.columnas, 1), alto / max(self.filas, 1))
+        # Factor elegido para que en tableros grandes siga legible y en pequeños no desborde.
+        nuevo = max(8, min(22, int(lado * 0.42)))
+        if abs(nuevo - self._fuente_celdas_px) < 1:
+            return
+        self._fuente_celdas_px = nuevo
+        fuente = (self._familia_fuente, nuevo, "bold")
+        for fila in self.casillas_botones:
+            for boton in fila:
+                boton.config(font=fuente)
 
     def _aplicar_nivel_predefinido(self, filas: int, columnas: int, minas: int) -> None:
-        """Cambia tamaño y minas según el nivel elegido en el menú."""
         self.filas, self.columnas, self.minas_totales = filas, columnas, minas
         self.nueva_partida()
 
     def _nivel_personalizado(self) -> None:
-        """Diálogos para filas, columnas y minas con límites razonables."""
         f = simpledialog.askinteger("Filas", "Número de filas (5-30):", minvalue=5, maxvalue=30)
         if f is None:
             return
@@ -111,64 +223,85 @@ class AplicacionBuscaminas:
         self.nueva_partida()
 
     def _detener_temporizador(self) -> None:
-        """Cancela la llamada periódica al avance del tiempo."""
         if self._id_temporizador is not None:
             self.ventana_principal.after_cancel(self._id_temporizador)
             self._id_temporizador = None
 
     def _avanzar_temporizador(self) -> None:
-        """Suma un segundo mientras la partida siga en curso."""
         if self.tablero is None or self.tablero.estado != EstadoPartida.JUGANDO:
             return
         self._segundos += 1
-        self.etiqueta_tiempo.config(text=f"Tiempo: {self._segundos}")
+        self.etiqueta_tiempo.config(text=f"Tiempo: {self._segundos} s")
         self._id_temporizador = self.ventana_principal.after(1000, self._avanzar_temporizador)
 
     def _iniciar_temporizador_si_corresponde(self) -> None:
-        """Arranca el cronómetro en el primer revelado."""
         if self._partida_arrancada:
             return
         self._partida_arrancada = True
         self._segundos = 0
-        self.etiqueta_tiempo.config(text="Tiempo: 0")
+        self.etiqueta_tiempo.config(text="Tiempo: 0 s")
         self._detener_temporizador()
         self._id_temporizador = self.ventana_principal.after(1000, self._avanzar_temporizador)
 
     def nueva_partida(self) -> None:
-        """Reinicia estado, crea un Tablero nuevo y vuelve a dibujar los botones."""
+        """Recrea el tablero lógico y los botones; la rejilla sigue siendo expandible."""
         self._detener_temporizador()
         self._segundos = 0
         self._partida_arrancada = False
-        self.etiqueta_tiempo.config(text="Tiempo: 0")
+        self.etiqueta_tiempo.config(text="Tiempo: 0 s")
         self.tablero = Tablero(self.filas, self.columnas, self.minas_totales)
         self.etiqueta_minas.config(text=f"Minas: {self.minas_totales}")
+
         for hijo in self.marco_rejilla.winfo_children():
             hijo.destroy()
         self.casillas_botones = []
+
+        t = self._tema
+        fuente = (self._familia_fuente, self._fuente_celdas_px, "bold")
+
         for fila in range(self.filas):
             fila_botones: list[tk.Button] = []
             for columna in range(self.columnas):
                 boton = tk.Button(
                     self.marco_rejilla,
-                    width=2,
-                    height=1,
-                    relief=tk.RAISED,
-                    font=("Segoe UI", 10, "bold"),
+                    text="",
+                    relief=tk.FLAT,
+                    bd=0,
+                    highlightthickness=0,
+                    padx=0,
+                    pady=0,
+                    activebackground=t["celda_cubierta_activa"],
+                    activeforeground=t["texto"],
+                    font=fuente,
+                    cursor="hand2",
                 )
                 boton.grid(row=fila, column=columna, padx=1, pady=1, sticky="nsew")
+                self._pintar_celda_tapada(boton)
                 boton.bind("<Button-1>", self._crear_manejador_clic_izquierdo(fila, columna))
                 boton.bind("<Button-3>", self._crear_manejador_clic_derecho(fila, columna))
                 boton.bind("<Button-2>", self._crear_manejador_acorde(fila, columna))
                 fila_botones.append(boton)
             self.casillas_botones.append(fila_botones)
+
         for i in range(self.filas):
-            self.marco_rejilla.rowconfigure(i, weight=1)
+            self.marco_rejilla.rowconfigure(i, weight=1, uniform="celda")
         for j in range(self.columnas):
-            self.marco_rejilla.columnconfigure(j, weight=1)
+            self.marco_rejilla.columnconfigure(j, weight=1, uniform="celda")
+
+        self.ventana_principal.after_idle(lambda: self.marco_rejilla.event_generate("<Configure>"))
+
+    def _pintar_celda_tapada(self, boton: tk.Button) -> None:
+        """Aspecto de casilla no revelada (interactiva)."""
+        t = self._tema
+        boton.config(
+            text="",
+            fg=t["texto"],
+            bg=t["celda_cubierta"],
+            relief=tk.FLAT,
+            state=tk.NORMAL,
+        )
 
     def _crear_manejador_clic_izquierdo(self, fila: int, columna: int) -> Callable[[tk.Event], None]:
-        """Devuelve la función que revela la casilla (fila, columna)."""
-
         def al_clic(_: tk.Event) -> None:
             if self.tablero is None:
                 return
@@ -179,8 +312,6 @@ class AplicacionBuscaminas:
         return al_clic
 
     def _crear_manejador_clic_derecho(self, fila: int, columna: int) -> Callable[[tk.Event], None]:
-        """Devuelve la función que alterna bandera en (fila, columna)."""
-
         def al_clic(_: tk.Event) -> None:
             if self.tablero is None:
                 return
@@ -192,8 +323,6 @@ class AplicacionBuscaminas:
         return al_clic
 
     def _crear_manejador_acorde(self, fila: int, columna: int) -> Callable[[tk.Event], None]:
-        """Devuelve la función de revelado por acorde (clic central / rueda)."""
-
         def al_clic(_: tk.Event) -> None:
             if self.tablero is None:
                 return
@@ -203,7 +332,6 @@ class AplicacionBuscaminas:
         return al_clic
 
     def _actualizar_tras_revelado(self, resultado: ResultadoRevelado) -> None:
-        """Refresca botones y muestra mensaje si la partida terminó."""
         for f, c in resultado.casillas_reveladas:
             self._actualizar_apariencia_casilla(f, c)
         if resultado.estado == EstadoPartida.PERDIDO:
@@ -216,34 +344,55 @@ class AplicacionBuscaminas:
             messagebox.showinfo("Fin", "¡Has despejado todo! Victoria.")
 
     def _actualizar_apariencia_casilla(self, fila: int, columna: int) -> None:
-        """Pinta el botón según revelado, mina, número o bandera."""
         if self.tablero is None:
             return
+        t = self._tema
         boton = self.casillas_botones[fila][columna]
+        fuente = (self._familia_fuente, self._fuente_celdas_px, "bold")
+
         if (fila, columna) in self.tablero.reveladas:
             if self.tablero.es_mina(fila, columna):
-                boton.config(text="*", bg="#FFAAAA", fg="#000000", relief=tk.SUNKEN, state=tk.DISABLED)
+                boton.config(
+                    text="*",
+                    font=fuente,
+                    fg=t["mina"],
+                    bg=t["mina_fondo"],
+                    relief=tk.FLAT,
+                    bd=0,
+                    state=tk.DISABLED,
+                    highlightthickness=0,
+                )
             else:
                 n = self.tablero.contar_minas_adyacentes(fila, columna)
                 texto = "" if n == 0 else str(n)
-                # Tkinter no acepta fg=""; con n==0 el texto va vacío pero fg debe ser un nombre de color válido.
-                color_frente = (
-                    COLORES_NUMEROS[n] if 0 <= n < len(COLORES_NUMEROS) else "#000000"
-                )
+                color_frente = COLORES_NUMEROS[n] if 0 <= n < len(COLORES_NUMEROS) else t["texto"]
+                fondo = t["celda_numero"] if n else t["celda_revelada"]
                 boton.config(
                     text=texto,
+                    font=fuente,
                     fg=color_frente,
-                    bg="#DDDDDD" if n else "#EEEEEE",
-                    relief=tk.SUNKEN,
+                    bg=fondo,
+                    relief=tk.FLAT,
+                    bd=0,
                     state=tk.DISABLED,
+                    highlightthickness=0,
                 )
         elif (fila, columna) in self.tablero.banderas:
-            boton.config(text="⚑", fg="#CC0000", bg="#DDDDDD", state=tk.NORMAL)
+            boton.config(
+                text="⚑",
+                font=fuente,
+                fg=t["bandera"],
+                bg=t["bandera_fondo"],
+                relief=tk.FLAT,
+                bd=0,
+                state=tk.NORMAL,
+                highlightthickness=0,
+            )
         else:
-            boton.config(text="", fg="#000000", bg="#F0F0F0", relief=tk.RAISED, state=tk.NORMAL)
+            self._pintar_celda_tapada(boton)
+            boton.config(font=fuente)
 
     def _mostrar_todas_las_minas(self) -> None:
-        """Al perder, deja visibles todas las minas."""
         if self.tablero is None:
             return
         for fila in range(self.filas):
@@ -253,7 +402,6 @@ class AplicacionBuscaminas:
                     self._actualizar_apariencia_casilla(fila, columna)
 
     def _marcar_banderas_en_todas_las_minas(self) -> None:
-        """Al ganar, coloca bandera en cada mina para un cierre visual claro."""
         if self.tablero is None:
             return
         for posicion in self.tablero.minas:
@@ -263,11 +411,9 @@ class AplicacionBuscaminas:
                 self._actualizar_apariencia_casilla(fila, columna)
 
     def ejecutar(self) -> None:
-        """Entra en el bucle principal de eventos de Tkinter."""
         self.ventana_principal.mainloop()
 
 
 def ejecutar() -> None:
-    """Crea la aplicación y la muestra."""
     app = AplicacionBuscaminas()
     app.ejecutar()

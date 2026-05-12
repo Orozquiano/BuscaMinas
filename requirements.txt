@@ -1,0 +1,2 @@
+# Solo biblioteca estándar (tkinter).
+# Linux sin tk: sudo apt install python3-tk

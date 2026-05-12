@@ -18,9 +18,9 @@ NIVELES_PRECONFIGURADOS: Tuple[Tuple[str, int, int, int], ...] = (
     ("Experto (16×30, 99)", 16, 30, 99),
 )
 
-# Colores clásicos para los números 1–8 (índice 0 sin uso).
+# Colores para números 1–8; el índice 0 es casilla vacía (texto sin dígito: hace falta un color Tk válido).
 COLORES_NUMEROS = (
-    "",
+    "#888888",
     "#0000DD",
     "#007700",
     "#CC0000",
@@ -226,7 +226,10 @@ class AplicacionBuscaminas:
             else:
                 n = self.tablero.contar_minas_adyacentes(fila, columna)
                 texto = "" if n == 0 else str(n)
-                color_frente = COLORES_NUMEROS[n] if 0 <= n < len(COLORES_NUMEROS) else "#000000"
+                # Tkinter no acepta fg=""; con n==0 el texto va vacío pero fg debe ser un nombre de color válido.
+                color_frente = (
+                    COLORES_NUMEROS[n] if 0 <= n < len(COLORES_NUMEROS) else "#000000"
+                )
                 boton.config(
                     text=texto,
                     fg=color_frente,

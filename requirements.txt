@@ -1,2 +1,14 @@
-# Solo biblioteca estándar (tkinter).
-# Linux sin tk: sudo apt install python3-tk
+# =============================================================================
+# Buscaminas — dependencias (pip)
+# =============================================================================
+# El juego solo usa la biblioteca estándar de Python (incluida tkinter).
+# Este archivo existe para que puedas fijar un flujo de instalación con pip
+# y, si más adelante se añaden paquetes, ya esté el archivo listo.
+#
+# Instalación:
+#   pip install -r requirements.txt
+#
+# No hay paquetes de PyPI obligatorios en la línea siguiente; las líneas que
+# empiezan por # se ignoran. Si añades librerías, pon una por línea, por ejemplo:
+#   requests>=2.28.0
+# =============================================================================

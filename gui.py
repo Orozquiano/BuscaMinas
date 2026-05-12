@@ -59,11 +59,12 @@ class AplicacionBuscaminas:
 
     def __init__(self) -> None:
         self._tema = _tema_visual()
+        # Tk() debe existir antes de font.families() (en 3.11+ no hay raíz implícita).
+        self.ventana_principal = tk.Tk()
         self._familia_fuente = "Segoe UI"
-        if "Segoe UI" not in tkfont.families():
+        if "Segoe UI" not in tkfont.families(root=self.ventana_principal):
             self._familia_fuente = "TkDefaultFont"
 
-        self.ventana_principal = tk.Tk()
         self.ventana_principal.title("Buscaminas")
         self.ventana_principal.configure(bg=self._tema["fondo_raiz"])
         self.ventana_principal.minsize(520, 420)
@@ -337,6 +338,8 @@ class AplicacionBuscaminas:
         if resultado.estado == EstadoPartida.PERDIDO:
             self._detener_temporizador()
             self._mostrar_todas_las_minas()
+            # Quita banderas en casillas sin mina y las revela: el número solo cuenta minas reales.
+            self._revelar_banderas_incorrectas()
             messagebox.showinfo("Fin", "¡Has pisado una mina! Partida perdida.")
         elif resultado.estado == EstadoPartida.GANADO:
             self._detener_temporizador()
@@ -400,6 +403,19 @@ class AplicacionBuscaminas:
                 if self.tablero.es_mina(fila, columna):
                     self.tablero.reveladas.add((fila, columna))
                     self._actualizar_apariencia_casilla(fila, columna)
+
+    def _revelar_banderas_incorrectas(self) -> None:
+        """
+        Tras perder: las banderas que no hayan acertado una mina se quitan y se muestra
+        el contenido real (así se entiende por qué un vecino mostraba 1 y no 2).
+        """
+        if self.tablero is None:
+            return
+        for fila, columna in list(self.tablero.banderas):
+            if not self.tablero.es_mina(fila, columna):
+                self.tablero.banderas.remove((fila, columna))
+                self.tablero.reveladas.add((fila, columna))
+                self._actualizar_apariencia_casilla(fila, columna)
 
     def _marcar_banderas_en_todas_las_minas(self) -> None:
         if self.tablero is None:

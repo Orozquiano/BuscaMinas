@@ -1,5 +1,5 @@
-"""Buscaminas clásico: lógica de tablero e interfaz gráfica."""
+"""Paquete del buscaminas: lógica en tablero e interfaz en gui."""
 
-from minesweeper.board import Board
+from minesweeper.board import EstadoPartida, ResultadoRevelado, Tablero
 
-__all__ = ["Board"]
+__all__ = ["EstadoPartida", "ResultadoRevelado", "Tablero"]

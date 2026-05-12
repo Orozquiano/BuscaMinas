@@ -1,4 +1,7 @@
-"""Interfaz Tkinter del buscaminas."""
+"""
+Interfaz gráfica con Tkinter: rejilla de botones, menú de niveles,
+temporizador y contador de minas restantes (aproximado por banderas).
+"""
 
 from __future__ import annotations
 
@@ -6,17 +9,17 @@ import tkinter as tk
 from tkinter import messagebox, simpledialog, ttk
 from typing import Callable, Optional, Tuple
 
-from minesweeper.board import Board, GameStatus, RevealResult
+from minesweeper.board import EstadoPartida, ResultadoRevelado, Tablero
 
-
-# Principiante, Intermedio, Experto (filas, columnas, minas)
-PRESETS: Tuple[Tuple[str, int, int, int], ...] = (
+# Texto del menú y (filas, columnas, número de minas) para cada nivel.
+NIVELES_PRECONFIGURADOS: Tuple[Tuple[str, int, int, int], ...] = (
     ("Principiante (9×9, 10)", 9, 9, 10),
     ("Intermedio (16×16, 40)", 16, 16, 40),
     ("Experto (16×30, 99)", 16, 30, 99),
 )
 
-NUMBER_COLORS = (
+# Colores clásicos para los números 1–8 (índice 0 sin uso).
+COLORES_NUMEROS = (
     "",
     "#0000DD",
     "#007700",
@@ -29,64 +32,73 @@ NUMBER_COLORS = (
 )
 
 
-class MinesweeperApp:
-    """Ventana principal: rejilla de botones, temporizador y menú de niveles."""
+class AplicacionBuscaminas:
+    """Ventana principal: construye la rejilla y enlaza eventos de ratón."""
 
     def __init__(self) -> None:
-        self.root = tk.Tk()
-        self.root.title("Buscaminas")
-        self.rows, self.cols, self.mines = 9, 9, 10
-        self.board: Optional[Board] = None
-        self.cells: list[list[tk.Button]] = []
-        self._timer_id: Optional[str] = None
-        self._seconds = 0
-        self._started = False
+        # Raíz de Tkinter.
+        self.ventana_principal = tk.Tk()
+        self.ventana_principal.title("Buscaminas")
+        # Dimensiones y minas de la partida actual (por defecto principiante).
+        self.filas, self.columnas, self.minas_totales = 9, 9, 10
+        self.tablero: Optional[Tablero] = None
+        # Matriz de botones [fila][columna].
+        self.casillas_botones: list[list[tk.Button]] = []
+        # Identificador devuelto por after() para poder cancelar el temporizador.
+        self._id_temporizador: Optional[str] = None
+        self._segundos = 0
+        # True después del primer revelado (para arrancar el cronómetro una sola vez).
+        self._partida_arrancada = False
 
-        self._build_menu()
-        self._build_toolbar()
-        self._frame = ttk.Frame(self.root, padding=4)
-        self._frame.pack(fill=tk.BOTH, expand=True)
-        self.new_game()
+        self._construir_menu()
+        self._construir_barra_herramientas()
+        self.marco_rejilla = ttk.Frame(self.ventana_principal, padding=4)
+        self.marco_rejilla.pack(fill=tk.BOTH, expand=True)
+        self.nueva_partida()
 
-    def _build_menu(self) -> None:
-        menubar = tk.Menu(self.root)
-        self.root.config(menu=menubar)
-        game_menu = tk.Menu(menubar, tearoff=0)
-        menubar.add_cascade(label="Juego", menu=game_menu)
-        game_menu.add_command(label="Nueva partida", command=self.new_game, accelerator="F2")
-        game_menu.add_separator()
-        for label, r, c, m in PRESETS:
-            game_menu.add_command(
-                label=label,
-                command=lambda rr=r, cc=c, mm=m: self._set_preset(rr, cc, mm),
+    def _construir_menu(self) -> None:
+        """Menú superior: nueva partida, niveles y salida."""
+        barra_menu = tk.Menu(self.ventana_principal)
+        self.ventana_principal.config(menu=barra_menu)
+        menu_juego = tk.Menu(barra_menu, tearoff=0)
+        barra_menu.add_cascade(label="Juego", menu=menu_juego)
+        menu_juego.add_command(label="Nueva partida", command=self.nueva_partida, accelerator="F2")
+        menu_juego.add_separator()
+        for etiqueta, f, c, m in NIVELES_PRECONFIGURADOS:
+            menu_juego.add_command(
+                label=etiqueta,
+                command=lambda ff=f, cc=c, mm=m: self._aplicar_nivel_predefinido(ff, cc, mm),
             )
-        game_menu.add_command(label="Personalizado…", command=self._custom_preset)
-        game_menu.add_separator()
-        game_menu.add_command(label="Salir", command=self.root.quit)
-        self.root.bind("<F2>", lambda e: self.new_game())
+        menu_juego.add_command(label="Personalizado…", command=self._nivel_personalizado)
+        menu_juego.add_separator()
+        menu_juego.add_command(label="Salir", command=self.ventana_principal.quit)
+        self.ventana_principal.bind("<F2>", lambda _: self.nueva_partida())
 
-    def _build_toolbar(self) -> None:
-        bar = ttk.Frame(self.root, padding=(8, 4))
-        bar.pack(fill=tk.X)
-        self.lbl_mines = ttk.Label(bar, text="Minas: 10", width=14)
-        self.lbl_mines.pack(side=tk.LEFT)
-        self.btn_reset = ttk.Button(bar, text="Reiniciar", command=self.new_game)
-        self.btn_reset.pack(side=tk.LEFT, padx=8)
-        self.lbl_time = ttk.Label(bar, text="Tiempo: 0", width=12)
-        self.lbl_time.pack(side=tk.LEFT)
+    def _construir_barra_herramientas(self) -> None:
+        """Etiquetas de minas y tiempo más botón reiniciar."""
+        barra = ttk.Frame(self.ventana_principal, padding=(8, 4))
+        barra.pack(fill=tk.X)
+        self.etiqueta_minas = ttk.Label(barra, text="Minas: 10", width=14)
+        self.etiqueta_minas.pack(side=tk.LEFT)
+        self.boton_reiniciar = ttk.Button(barra, text="Reiniciar", command=self.nueva_partida)
+        self.boton_reiniciar.pack(side=tk.LEFT, padx=8)
+        self.etiqueta_tiempo = ttk.Label(barra, text="Tiempo: 0", width=12)
+        self.etiqueta_tiempo.pack(side=tk.LEFT)
 
-    def _set_preset(self, rows: int, cols: int, mines: int) -> None:
-        self.rows, self.cols, self.mines = rows, cols, mines
-        self.new_game()
+    def _aplicar_nivel_predefinido(self, filas: int, columnas: int, minas: int) -> None:
+        """Cambia tamaño y minas según el nivel elegido en el menú."""
+        self.filas, self.columnas, self.minas_totales = filas, columnas, minas
+        self.nueva_partida()
 
-    def _custom_preset(self) -> None:
-        r = simpledialog.askinteger("Filas", "Número de filas (5-30):", minvalue=5, maxvalue=30)
-        if r is None:
+    def _nivel_personalizado(self) -> None:
+        """Diálogos para filas, columnas y minas con límites razonables."""
+        f = simpledialog.askinteger("Filas", "Número de filas (5-30):", minvalue=5, maxvalue=30)
+        if f is None:
             return
         c = simpledialog.askinteger("Columnas", "Número de columnas (5-40):", minvalue=5, maxvalue=40)
         if c is None:
             return
-        max_m = r * c - 1
+        max_m = f * c - 1
         m = simpledialog.askinteger(
             "Minas",
             f"Número de minas (1-{max_m}):",
@@ -95,145 +107,164 @@ class MinesweeperApp:
         )
         if m is None:
             return
-        self.rows, self.cols, self.mines = r, c, m
-        self.new_game()
+        self.filas, self.columnas, self.minas_totales = f, c, m
+        self.nueva_partida()
 
-    def _stop_timer(self) -> None:
-        if self._timer_id is not None:
-            self.root.after_cancel(self._timer_id)
-            self._timer_id = None
+    def _detener_temporizador(self) -> None:
+        """Cancela la llamada periódica al avance del tiempo."""
+        if self._id_temporizador is not None:
+            self.ventana_principal.after_cancel(self._id_temporizador)
+            self._id_temporizador = None
 
-    def _tick_timer(self) -> None:
-        if self.board is None or self.board.status != GameStatus.PLAYING:
+    def _avanzar_temporizador(self) -> None:
+        """Suma un segundo mientras la partida siga en curso."""
+        if self.tablero is None or self.tablero.estado != EstadoPartida.JUGANDO:
             return
-        self._seconds += 1
-        self.lbl_time.config(text=f"Tiempo: {self._seconds}")
-        self._timer_id = self.root.after(1000, self._tick_timer)
+        self._segundos += 1
+        self.etiqueta_tiempo.config(text=f"Tiempo: {self._segundos}")
+        self._id_temporizador = self.ventana_principal.after(1000, self._avanzar_temporizador)
 
-    def _maybe_start_timer(self) -> None:
-        if self._started:
+    def _iniciar_temporizador_si_corresponde(self) -> None:
+        """Arranca el cronómetro en el primer revelado."""
+        if self._partida_arrancada:
             return
-        self._started = True
-        self._seconds = 0
-        self.lbl_time.config(text="Tiempo: 0")
-        self._stop_timer()
-        self._timer_id = self.root.after(1000, self._tick_timer)
+        self._partida_arrancada = True
+        self._segundos = 0
+        self.etiqueta_tiempo.config(text="Tiempo: 0")
+        self._detener_temporizador()
+        self._id_temporizador = self.ventana_principal.after(1000, self._avanzar_temporizador)
 
-    def new_game(self) -> None:
-        self._stop_timer()
-        self._seconds = 0
-        self._started = False
-        self.lbl_time.config(text="Tiempo: 0")
-        self.board = Board(self.rows, self.cols, self.mines)
-        self.lbl_mines.config(text=f"Minas: {self.mines}")
-        for w in self._frame.winfo_children():
-            w.destroy()
-        self.cells = []
-        for r in range(self.rows):
-            row_widgets: list[tk.Button] = []
-            for c in range(self.cols):
-                btn = tk.Button(
-                    self._frame,
+    def nueva_partida(self) -> None:
+        """Reinicia estado, crea un Tablero nuevo y vuelve a dibujar los botones."""
+        self._detener_temporizador()
+        self._segundos = 0
+        self._partida_arrancada = False
+        self.etiqueta_tiempo.config(text="Tiempo: 0")
+        self.tablero = Tablero(self.filas, self.columnas, self.minas_totales)
+        self.etiqueta_minas.config(text=f"Minas: {self.minas_totales}")
+        for hijo in self.marco_rejilla.winfo_children():
+            hijo.destroy()
+        self.casillas_botones = []
+        for fila in range(self.filas):
+            fila_botones: list[tk.Button] = []
+            for columna in range(self.columnas):
+                boton = tk.Button(
+                    self.marco_rejilla,
                     width=2,
                     height=1,
                     relief=tk.RAISED,
                     font=("Segoe UI", 10, "bold"),
                 )
-                btn.grid(row=r, column=c, padx=1, pady=1, sticky="nsew")
-                btn.bind("<Button-1>", self._make_left_handler(r, c))
-                btn.bind("<Button-3>", self._make_right_handler(r, c))
-                btn.bind("<Button-2>", self._make_chord_handler(r, c))
-                row_widgets.append(btn)
-            self.cells.append(row_widgets)
-        for i in range(self.rows):
-            self._frame.rowconfigure(i, weight=1)
-        for j in range(self.cols):
-            self._frame.columnconfigure(j, weight=1)
+                boton.grid(row=fila, column=columna, padx=1, pady=1, sticky="nsew")
+                boton.bind("<Button-1>", self._crear_manejador_clic_izquierdo(fila, columna))
+                boton.bind("<Button-3>", self._crear_manejador_clic_derecho(fila, columna))
+                boton.bind("<Button-2>", self._crear_manejador_acorde(fila, columna))
+                fila_botones.append(boton)
+            self.casillas_botones.append(fila_botones)
+        for i in range(self.filas):
+            self.marco_rejilla.rowconfigure(i, weight=1)
+        for j in range(self.columnas):
+            self.marco_rejilla.columnconfigure(j, weight=1)
 
-    def _make_left_handler(self, r: int, c: int) -> Callable[[tk.Event], None]:
-        def handler(_: tk.Event) -> None:
-            if self.board is None:
+    def _crear_manejador_clic_izquierdo(self, fila: int, columna: int) -> Callable[[tk.Event], None]:
+        """Devuelve la función que revela la casilla (fila, columna)."""
+
+        def al_clic(_: tk.Event) -> None:
+            if self.tablero is None:
                 return
-            self._maybe_start_timer()
-            res = self.board.reveal(r, c)
-            self._refresh_after_reveal(res)
-        return handler
+            self._iniciar_temporizador_si_corresponde()
+            resultado = self.tablero.revelar(fila, columna)
+            self._actualizar_tras_revelado(resultado)
 
-    def _make_right_handler(self, r: int, c: int) -> Callable[[tk.Event], None]:
-        def handler(_: tk.Event) -> None:
-            if self.board is None:
+        return al_clic
+
+    def _crear_manejador_clic_derecho(self, fila: int, columna: int) -> Callable[[tk.Event], None]:
+        """Devuelve la función que alterna bandera en (fila, columna)."""
+
+        def al_clic(_: tk.Event) -> None:
+            if self.tablero is None:
                 return
-            if self.board.toggle_flag(r, c):
-                self._update_cell_display(r, c)
-                remaining = self.mines - len(self.board.flags)
-                self.lbl_mines.config(text=f"Minas: {remaining}")
-        return handler
+            if self.tablero.alternar_bandera(fila, columna):
+                self._actualizar_apariencia_casilla(fila, columna)
+                restantes = self.minas_totales - len(self.tablero.banderas)
+                self.etiqueta_minas.config(text=f"Minas: {restantes}")
 
-    def _make_chord_handler(self, r: int, c: int) -> Callable[[tk.Event], None]:
-        def handler(_: tk.Event) -> None:
-            if self.board is None:
+        return al_clic
+
+    def _crear_manejador_acorde(self, fila: int, columna: int) -> Callable[[tk.Event], None]:
+        """Devuelve la función de revelado por acorde (clic central / rueda)."""
+
+        def al_clic(_: tk.Event) -> None:
+            if self.tablero is None:
                 return
-            res = self.board.chord_reveal(r, c)
-            self._refresh_after_reveal(res)
-        return handler
+            resultado = self.tablero.revelar_acorde(fila, columna)
+            self._actualizar_tras_revelado(resultado)
 
-    def _refresh_after_reveal(self, res: RevealResult) -> None:
-        for rr, cc in res.newly_revealed:
-            self._update_cell_display(rr, cc)
-        if res.status == GameStatus.LOST:
-            self._stop_timer()
-            self._reveal_all_mines()
+        return al_clic
+
+    def _actualizar_tras_revelado(self, resultado: ResultadoRevelado) -> None:
+        """Refresca botones y muestra mensaje si la partida terminó."""
+        for f, c in resultado.casillas_reveladas:
+            self._actualizar_apariencia_casilla(f, c)
+        if resultado.estado == EstadoPartida.PERDIDO:
+            self._detener_temporizador()
+            self._mostrar_todas_las_minas()
             messagebox.showinfo("Fin", "¡Has pisado una mina! Partida perdida.")
-        elif res.status == GameStatus.WON:
-            self._stop_timer()
-            self._flag_all_mines()
+        elif resultado.estado == EstadoPartida.GANADO:
+            self._detener_temporizador()
+            self._marcar_banderas_en_todas_las_minas()
             messagebox.showinfo("Fin", "¡Has despejado todo! Victoria.")
 
-    def _update_cell_display(self, r: int, c: int) -> None:
-        if self.board is None:
+    def _actualizar_apariencia_casilla(self, fila: int, columna: int) -> None:
+        """Pinta el botón según revelado, mina, número o bandera."""
+        if self.tablero is None:
             return
-        btn = self.cells[r][c]
-        if (r, c) in self.board.revealed:
-            if self.board.is_mine(r, c):
-                btn.config(text="*", bg="#FFAAAA", fg="#000000", relief=tk.SUNKEN, state=tk.DISABLED)
+        boton = self.casillas_botones[fila][columna]
+        if (fila, columna) in self.tablero.reveladas:
+            if self.tablero.es_mina(fila, columna):
+                boton.config(text="*", bg="#FFAAAA", fg="#000000", relief=tk.SUNKEN, state=tk.DISABLED)
             else:
-                n = self.board.neighbor_mines(r, c)
-                txt = "" if n == 0 else str(n)
-                fg = NUMBER_COLORS[n] if 0 <= n < len(NUMBER_COLORS) else "#000000"
-                btn.config(
-                    text=txt,
-                    fg=fg,
+                n = self.tablero.contar_minas_adyacentes(fila, columna)
+                texto = "" if n == 0 else str(n)
+                color_frente = COLORES_NUMEROS[n] if 0 <= n < len(COLORES_NUMEROS) else "#000000"
+                boton.config(
+                    text=texto,
+                    fg=color_frente,
                     bg="#DDDDDD" if n else "#EEEEEE",
                     relief=tk.SUNKEN,
                     state=tk.DISABLED,
                 )
-        elif (r, c) in self.board.flags:
-            btn.config(text="⚑", fg="#CC0000", bg="#DDDDDD", state=tk.NORMAL)
+        elif (fila, columna) in self.tablero.banderas:
+            boton.config(text="⚑", fg="#CC0000", bg="#DDDDDD", state=tk.NORMAL)
         else:
-            btn.config(text="", fg="#000000", bg="#F0F0F0", relief=tk.RAISED, state=tk.NORMAL)
+            boton.config(text="", fg="#000000", bg="#F0F0F0", relief=tk.RAISED, state=tk.NORMAL)
 
-    def _reveal_all_mines(self) -> None:
-        if self.board is None:
+    def _mostrar_todas_las_minas(self) -> None:
+        """Al perder, deja visibles todas las minas."""
+        if self.tablero is None:
             return
-        for r in range(self.rows):
-            for c in range(self.cols):
-                if self.board.is_mine(r, c):
-                    self.board.revealed.add((r, c))
-                    self._update_cell_display(r, c)
+        for fila in range(self.filas):
+            for columna in range(self.columnas):
+                if self.tablero.es_mina(fila, columna):
+                    self.tablero.reveladas.add((fila, columna))
+                    self._actualizar_apariencia_casilla(fila, columna)
 
-    def _flag_all_mines(self) -> None:
-        if self.board is None:
+    def _marcar_banderas_en_todas_las_minas(self) -> None:
+        """Al ganar, coloca bandera en cada mina para un cierre visual claro."""
+        if self.tablero is None:
             return
-        for pos in self.board.mines:
-            self.board.flags.add(pos)
-        for r in range(self.rows):
-            for c in range(self.cols):
-                self._update_cell_display(r, c)
+        for posicion in self.tablero.minas:
+            self.tablero.banderas.add(posicion)
+        for fila in range(self.filas):
+            for columna in range(self.columnas):
+                self._actualizar_apariencia_casilla(fila, columna)
 
-    def run(self) -> None:
-        self.root.mainloop()
+    def ejecutar(self) -> None:
+        """Entra en el bucle principal de eventos de Tkinter."""
+        self.ventana_principal.mainloop()
 
 
-def main() -> None:
-    app = MinesweeperApp()
-    app.run()
+def ejecutar() -> None:
+    """Crea la aplicación y la muestra."""
+    app = AplicacionBuscaminas()
+    app.ejecutar()

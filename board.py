@@ -1,4 +1,7 @@
-"""Generación del tablero, revelado en cascada y condición de victoria."""
+"""
+Lógica del buscaminas: colocación de minas, revelado en cascada,
+banderas y revelación por acorde (clic central sobre un número).
+"""
 
 from __future__ import annotations
 
@@ -8,186 +11,201 @@ from dataclasses import dataclass, field
 from enum import Enum, auto
 from typing import Deque, List, Optional, Set, Tuple
 
+# Par (fila, columna) en el tablero.
+Casilla = Tuple[int, int]
 
-Cell = Tuple[int, int]
 
+class EstadoPartida(Enum):
+    """Indica si la partida sigue activa o ya terminó."""
 
-class GameStatus(Enum):
-    """Estado de la partida."""
-
-    PLAYING = auto()
-    WON = auto()
-    LOST = auto()
+    JUGANDO = auto()
+    GANADO = auto()
+    PERDIDO = auto()
 
 
 @dataclass
-class RevealResult:
-    """Resultado de intentar revelar una casilla."""
+class ResultadoRevelado:
+    """Información devuelta al intentar revelar una o varias casillas."""
 
-    status: GameStatus
-    newly_revealed: List[Cell] = field(default_factory=list)
-    hit_mine: Optional[Cell] = None
+    # Estado de la partida tras la acción.
+    estado: EstadoPartida
+    # Casillas que pasan a estar visibles en este turno (puede ser varias por la cascada).
+    casillas_reveladas: List[Casilla] = field(default_factory=list)
+    # Si se perdió, coordenadas de la mina pisada (si aplica).
+    casilla_mina: Optional[Casilla] = None
 
 
-class Board:
-    """Tablero de buscaminas con minas colocadas tras el primer clic."""
+class Tablero:
+    """Tablero: las minas se colocan después del primer clic (zona segura)."""
 
-    def __init__(self, rows: int, cols: int, mine_count: int) -> None:
-        if rows < 1 or cols < 1:
+    def __init__(self, filas: int, columnas: int, cantidad_minas: int) -> None:
+        if filas < 1 or columnas < 1:
             raise ValueError("El tablero debe tener al menos 1 fila y 1 columna.")
-        max_mines = rows * cols - 1
-        if mine_count < 1 or mine_count > max_mines:
-            raise ValueError(f"mine_count debe estar entre 1 y {max_mines}.")
-        self.rows = rows
-        self.cols = cols
-        self.mine_count = mine_count
-        self._mines: Set[Cell] = set()
-        self._generated = False
-        self.revealed: Set[Cell] = set()
-        self.flags: Set[Cell] = set()
-        self.status = GameStatus.PLAYING
+        max_minas = filas * columnas - 1
+        if cantidad_minas < 1 or cantidad_minas > max_minas:
+            raise ValueError(f"cantidad_minas debe estar entre 1 y {max_minas}.")
+        self.filas = filas
+        self.columnas = columnas
+        self.cantidad_minas = cantidad_minas
+        # Conjunto de posiciones donde hay mina (se rellena al generar).
+        self._minas: Set[Casilla] = set()
+        # True cuando ya se colocaron las minas (tras el primer revelado).
+        self._generado = False
+        # Casillas ya descubiertas por el jugador.
+        self.reveladas: Set[Casilla] = set()
+        # Casillas marcadas con bandera.
+        self.banderas: Set[Casilla] = set()
+        self.estado = EstadoPartida.JUGANDO
 
-    def neighbor_mines(self, r: int, c: int) -> int:
-        """Cuenta minas en las 8 casillas adyacentes (no cuenta la propia)."""
+    def contar_minas_adyacentes(self, fila: int, columna: int) -> int:
+        """Cuenta cuántas minas hay en las 8 casillas vecinas (no cuenta la propia)."""
         total = 0
-        for dr in (-1, 0, 1):
-            for dc in (-1, 0, 1):
-                if dr == 0 and dc == 0:
+        for delta_f in (-1, 0, 1):
+            for delta_c in (-1, 0, 1):
+                if delta_f == 0 and delta_c == 0:
                     continue
-                nr, nc = r + dr, c + dc
-                if 0 <= nr < self.rows and 0 <= nc < self.cols:
-                    if (nr, nc) in self._mines:
+                vec_f, vec_c = fila + delta_f, columna + delta_c
+                if 0 <= vec_f < self.filas and 0 <= vec_c < self.columnas:
+                    if (vec_f, vec_c) in self._minas:
                         total += 1
         return total
 
-    def _place_mines(self, safe_r: int, safe_c: int) -> None:
-        """Coloca minas evitando la casilla inicial y sus 8 vecinas."""
-        safe: Set[Cell] = {(safe_r, safe_c)}
-        for dr in (-1, 0, 1):
-            for dc in (-1, 0, 1):
-                nr, nc = safe_r + dr, safe_c + dc
-                if 0 <= nr < self.rows and 0 <= nc < self.cols:
-                    safe.add((nr, nc))
-        candidates = [
-            (r, c)
-            for r in range(self.rows)
-            for c in range(self.cols)
-            if (r, c) not in safe
+    def _colocar_minas(self, fila_segura: int, columna_segura: int) -> None:
+        """Elige posiciones aleatorias de minas evitando la primera casilla y sus vecinas."""
+        zona_segura: Set[Casilla] = {(fila_segura, columna_segura)}
+        for delta_f in (-1, 0, 1):
+            for delta_c in (-1, 0, 1):
+                vf, vc = fila_segura + delta_f, columna_segura + delta_c
+                if 0 <= vf < self.filas and 0 <= vc < self.columnas:
+                    zona_segura.add((vf, vc))
+        candidatas = [
+            (f, c)
+            for f in range(self.filas)
+            for c in range(self.columnas)
+            if (f, c) not in zona_segura
         ]
-        count = min(self.mine_count, len(candidates))
-        self._mines = set(random.sample(candidates, count))
-        self._generated = True
+        cuantas = min(self.cantidad_minas, len(candidatas))
+        self._minas = set(random.sample(candidatas, cuantas))
+        self._generado = True
 
-    def toggle_flag(self, r: int, c: int) -> bool:
+    def alternar_bandera(self, fila: int, columna: int) -> bool:
         """
-        Activa o desactiva bandera en una casilla no revelada.
-        @returns True si el estado de banderas cambió.
+        Pone o quita una bandera en una casilla tapada.
+        Devuelve True si hubo cambio (False si la partida terminó o ya estaba revelada).
         """
-        if self.status != GameStatus.PLAYING:
+        if self.estado != EstadoPartida.JUGANDO:
             return False
-        if (r, c) in self.revealed:
+        if (fila, columna) in self.reveladas:
             return False
-        if (r, c) in self.flags:
-            self.flags.remove((r, c))
+        if (fila, columna) in self.banderas:
+            self.banderas.remove((fila, columna))
         else:
-            self.flags.add((r, c))
+            self.banderas.add((fila, columna))
         return True
 
-    def reveal(self, r: int, c: int) -> RevealResult:
-        """Revela una casilla; la primera genera el tablero (zona segura)."""
-        if self.status != GameStatus.PLAYING:
-            return RevealResult(status=self.status)
+    def revelar(self, fila: int, columna: int) -> ResultadoRevelado:
+        """
+        Descubre una casilla. Si es el primer revelado, genera el tablero con zona segura.
+        Las casillas con 0 minas vecinas abren en cascada el vecindario.
+        """
+        if self.estado != EstadoPartida.JUGANDO:
+            return ResultadoRevelado(estado=self.estado)
 
-        if not self._generated:
-            self._place_mines(r, c)
+        if not self._generado:
+            self._colocar_minas(fila, columna)
 
-        if (r, c) in self.flags:
-            return RevealResult(status=GameStatus.PLAYING)
+        if (fila, columna) in self.banderas:
+            return ResultadoRevelado(estado=EstadoPartida.JUGANDO)
 
-        if (r, c) in self.revealed:
-            return RevealResult(status=GameStatus.PLAYING)
+        if (fila, columna) in self.reveladas:
+            return ResultadoRevelado(estado=EstadoPartida.JUGANDO)
 
-        if (r, c) in self._mines:
-            self.revealed.add((r, c))
-            self.status = GameStatus.LOST
-            return RevealResult(
-                status=GameStatus.LOST,
-                newly_revealed=[(r, c)],
-                hit_mine=(r, c),
+        if (fila, columna) in self._minas:
+            self.reveladas.add((fila, columna))
+            self.estado = EstadoPartida.PERDIDO
+            return ResultadoRevelado(
+                estado=EstadoPartida.PERDIDO,
+                casillas_reveladas=[(fila, columna)],
+                casilla_mina=(fila, columna),
             )
 
-        newly: List[Cell] = []
-        queue: Deque[Cell] = deque()
-        queue.append((r, c))
+        # Cola para expandir todas las casillas “vacías” (0 minas alrededor) contiguas.
+        nuevas: List[Casilla] = []
+        cola: Deque[Casilla] = deque()
+        cola.append((fila, columna))
 
-        while queue:
-            cr, cc = queue.popleft()
-            if (cr, cc) in self.revealed or (cr, cc) in self.flags:
+        while cola:
+            f_actual, c_actual = cola.popleft()
+            if (f_actual, c_actual) in self.reveladas or (f_actual, c_actual) in self.banderas:
                 continue
-            if (cr, cc) in self._mines:
+            if (f_actual, c_actual) in self._minas:
                 continue
-            self.revealed.add((cr, cc))
-            newly.append((cr, cc))
-            if self.neighbor_mines(cr, cc) != 0:
+            self.reveladas.add((f_actual, c_actual))
+            nuevas.append((f_actual, c_actual))
+            # Si hay número > 0, no se expande más desde esta casilla.
+            if self.contar_minas_adyacentes(f_actual, c_actual) != 0:
                 continue
-            for dr in (-1, 0, 1):
-                for dc in (-1, 0, 1):
-                    if dr == 0 and dc == 0:
+            for delta_f in (-1, 0, 1):
+                for delta_c in (-1, 0, 1):
+                    if delta_f == 0 and delta_c == 0:
                         continue
-                    nr, nc = cr + dr, cc + dc
-                    if 0 <= nr < self.rows and 0 <= nc < self.cols:
-                        if (nr, nc) not in self.revealed and (nr, nc) not in self.flags:
-                            queue.append((nr, nc))
+                    vec_f, vec_c = f_actual + delta_f, c_actual + delta_c
+                    if 0 <= vec_f < self.filas and 0 <= vec_c < self.columnas:
+                        if (vec_f, vec_c) not in self.reveladas and (vec_f, vec_c) not in self.banderas:
+                            cola.append((vec_f, vec_c))
 
-        if self._check_win():
-            self.status = GameStatus.WON
+        if self._comprobar_victoria():
+            self.estado = EstadoPartida.GANADO
 
-        return RevealResult(status=self.status, newly_revealed=newly)
+        return ResultadoRevelado(estado=self.estado, casillas_reveladas=nuevas)
 
-    def _check_win(self) -> bool:
-        safe_total = self.rows * self.cols - len(self._mines)
-        return len(self.revealed) >= safe_total
+    def _comprobar_victoria(self) -> bool:
+        """True si todas las casillas sin mina están reveladas."""
+        casillas_seguras = self.filas * self.columnas - len(self._minas)
+        return len(self.reveladas) >= casillas_seguras
 
-    def chord_reveal(self, r: int, c: int) -> RevealResult:
+    def revelar_acorde(self, fila: int, columna: int) -> ResultadoRevelado:
         """
-        Clic con ambos botones (o central): si el número coincide con banderas
-        adyacentes, revela el resto de vecinos no marcados.
+        Revelado por acorde: sobre una casilla ya revelada con número,
+        si las banderas alrededor coinciden con ese número, revela el resto de vecinos.
         """
-        if self.status != GameStatus.PLAYING or not self._generated:
-            return RevealResult(status=self.status)
-        if (r, c) not in self.revealed or (r, c) in self._mines:
-            return RevealResult(status=GameStatus.PLAYING)
+        if self.estado != EstadoPartida.JUGANDO or not self._generado:
+            return ResultadoRevelado(estado=self.estado)
+        if (fila, columna) not in self.reveladas or (fila, columna) in self._minas:
+            return ResultadoRevelado(estado=EstadoPartida.JUGANDO)
 
-        n = self.neighbor_mines(r, c)
-        neighbors = []
-        flags_adj = 0
-        for dr in (-1, 0, 1):
-            for dc in (-1, 0, 1):
-                if dr == 0 and dc == 0:
+        numero = self.contar_minas_adyacentes(fila, columna)
+        vecinas: List[Casilla] = []
+        banderas_alrededor = 0
+        for delta_f in (-1, 0, 1):
+            for delta_c in (-1, 0, 1):
+                if delta_f == 0 and delta_c == 0:
                     continue
-                nr, nc = r + dr, c + dc
-                if 0 <= nr < self.rows and 0 <= nc < self.cols:
-                    neighbors.append((nr, nc))
-                    if (nr, nc) in self.flags:
-                        flags_adj += 1
+                vf, vc = fila + delta_f, columna + delta_c
+                if 0 <= vf < self.filas and 0 <= vc < self.columnas:
+                    vecinas.append((vf, vc))
+                    if (vf, vc) in self.banderas:
+                        banderas_alrededor += 1
 
-        if flags_adj != n:
-            return RevealResult(status=GameStatus.PLAYING)
+        if banderas_alrededor != numero:
+            return ResultadoRevelado(estado=EstadoPartida.JUGANDO)
 
-        combined = RevealResult(status=GameStatus.PLAYING, newly_revealed=[])
-        for nr, nc in neighbors:
-            if (nr, nc) in self.revealed or (nr, nc) in self.flags:
+        acumulado = ResultadoRevelado(estado=EstadoPartida.JUGANDO, casillas_reveladas=[])
+        for vf, vc in vecinas:
+            if (vf, vc) in self.reveladas or (vf, vc) in self.banderas:
                 continue
-            part = self.reveal(nr, nc)
-            combined.newly_revealed.extend(part.newly_revealed)
-            if part.hit_mine:
-                combined.hit_mine = part.hit_mine
-            combined.status = part.status
-        return combined
+            trozo = self.revelar(vf, vc)
+            acumulado.casillas_reveladas.extend(trozo.casillas_reveladas)
+            if trozo.casilla_mina:
+                acumulado.casilla_mina = trozo.casilla_mina
+            acumulado.estado = trozo.estado
+        return acumulado
 
     @property
-    def mines(self) -> Set[Cell]:
-        return set(self._mines)
+    def minas(self) -> Set[Casilla]:
+        """Copia del conjunto de coordenadas con mina (solo lectura lógica)."""
+        return set(self._minas)
 
-    def is_mine(self, r: int, c: int) -> bool:
-        return (r, c) in self._mines
+    def es_mina(self, fila: int, columna: int) -> bool:
+        """Indica si en esa posición hay una mina."""
+        return (fila, columna) in self._minas
